@@ -1,0 +1,19 @@
+[yosys]
+original = "yosys-original/build/yosys"
+optimized = "yosys-optimized/build/yosys"
+build_optimized = true
+
+[benchmark]
+cases = ["testcase"]
+warmup_rounds = 2
+formal_rounds = 6
+timing = "rusage"
+env_control = true
+jobs = 1
+
+[environment]
+host_cpus = "0-7,16-23"
+isolated_cpus = "8-15,24-31"
+benchmark_cpu = 8
+target_khz = 4000000
+settle_seconds = 60

@@ -1,0 +1,5 @@
+log = "experiments.jsonl"
+data_root = "experiment-data"
+repository_state_command = ["python3", "scripts/capture_repostate.py"]
+experiment_scripts = [["python3", "scripts/run_benchmark.py", "--settings", "experiments.toml"]]
+data_processing_scripts = [["python3", "scripts/analyze_benchmark.py"]]

@@ -1,5 +1,6 @@
-/experiments-data/
+/experiment-data/
+/tmp/
 .*/
 explog/test
-__pycache__
+__pycache__/
 experiments.jsonl
