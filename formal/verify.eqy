@@ -1,0 +1,20 @@
+[gold]
+tcl formal/read.tcl gold
+
+[gate]
+read_verilog -formal formal/cells.v
+tcl formal/read.tcl gate
+
+[script]
+memory_map
+opt_clean
+rename -hide
+check -assert
+
+[collect *]
+group *
+
+[strategy prove]
+use sby
+engine abc pdr
+timeout 180
