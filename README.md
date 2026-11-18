@@ -1,6 +1,6 @@
-# Yosys `$pmux` 综合优化复现仓库
+# 针对PMUX优化的Yosys项目 
 
-本仓库提供优化版 Yosys 与上游原版 Yosys 的对比实验环境，用于在 Intel Cyclone IV（`synth_intel -family cycloneiv`）综合流程下复现 **LUT4 面积、综合时间与峰值内存** 对比结果。优化原理与实验结论详见 [docs/技术报告.pdf](docs/技术报告.pdf)。
+本仓库提供优化版 Yosys 与原版 Yosys (v0.69 Release)的对比实验环境，用于在 Intel Cyclone IV（`synth_intel -family cycloneiv`）综合流程下复现 **LUT4 数量、综合时间与峰值内存** 对比结果。优化原理与实验结论详见 [docs/技术报告.pdf](docs/技术报告.pdf)。
 
 ## 1. 环境准备与编译
 
@@ -22,7 +22,7 @@ python3 -m pip install -e ./explog
 
 ### 方式一：快速复现（无需管理员权限，适用于任意 Linux 机器）
 
-如果不开启底层硬件隔离，可直接通过命令行并发运行全部测试用例并输出对比报告：
+如果不控制实验环境，可直接通过命令行并发运行全部测试用例并输出对比报告：
 
 ```bash
 python3 scripts/run_benchmark.py testcase --no-build --no-env-control --warmup 1 --rounds 3 --jobs 8 --output .work/repro/raw
@@ -31,7 +31,7 @@ python3 scripts/analyze_benchmark.py .work/repro/raw --output .work/repro/proces
 
 也可以只指定某个用例组快速验证（如 `testcase/official_case` 或 `testcase/axi_case`）。
 
-### 方式二：使用 `explog` 进行标准实验记录（支持严格环境隔离）
+### 方式二：使用 `explog` 进行标准实验记录（控制实验环境）
 
 通过 `explog` 运行实验会自动记录仓库 Git 状态、执行基准测试、汇总分析并在终端输出对比表：
 
@@ -41,10 +41,10 @@ explog run --config explog.toml --name "baseline" --message "复现基准对比"
 explog list --config explog.toml
 ```
 
-> **严格环境控制注意事项**：
+> **实验环境控制注意事项**：
 > `experiments.toml` 默认开启 `env_control = true`（启用 cgroup v2 核心隔离、中断迁移与 CPU 锁频，配合微秒级 CPU 时间测量）：
 > 1. 执行前需具备免密 `sudo` 权限（`sudo -n`）。若无 root 权限，请先在 `experiments.toml` 中将 `env_control` 改为 `false`。
-> 2. `[environment]` 默认按 16 核 32 线程处理器配置。**在不同硬件上开启 `env_control = true` 前，请根据本机 `lscpu` 拓扑修改 `experiments.toml` 中的核心范围（`host_cpus`、`isolated_cpus`、`benchmark_cpu`）及锁频值（`target_khz`）**。
+> 2. `[environment]` 按9955HX处理器（16核32线程）配置。**在不同硬件上开启 `env_control = true` 前，请根据本机 `lscpu` 拓扑修改 `experiments.toml` 中的核心范围（`host_cpus`、`isolated_cpus`、`benchmark_cpu`）及锁频值（`target_khz`）**。
 
 ## 3. 参数配置（`experiments.toml`）
 
@@ -62,7 +62,7 @@ explog list --config explog.toml
 
 ## 4. 查看结果与等价性验证
 
-每次 `explog run` 完成后，完整 Markdown 报表与 JSON 数据保存在 `experiment-data/<ID>/processed/`（`report.md` 与 `results.json`）。也可随时在终端查询或对比不同实验（变化率为负值代表减少/加速）：
+每次 `explog run` 完成后，完整 Markdown 报告与 JSON 数据保存在 `experiment-data/<ID>/processed/`（`report.md` 与 `results.json`）。也可随时在终端查询或对比不同实验（变化率为负值代表减少/加速）：
 
 ```bash
 # 查看第 1 号实验汇总表
