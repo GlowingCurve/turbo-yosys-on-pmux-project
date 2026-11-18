@@ -1,0 +1,250 @@
+Metadata-Version: 2.4
+Name: explog
+Version: 0.2.0
+Summary: A small experiment runner with an append-only JSONL log
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+
+# explog
+
+`explog` 运行实验、建立实验节点之间的先后关系，并维护只追加的 JSONL 日志。每次运行记录说明文字、运行数据目录与项目捕获命令产出的状态文件路径。项目自行定义状态文件的内容、格式与扩展名。
+
+它需要 Python 3.11 或更高版本,除标准库外没有任何运行时依赖。
+
+## 安装
+
+从本检出目录安装该项目:
+
+```bash
+python3 -m pip install .
+```
+
+如需可编辑的开发安装,请使用 `python3 -m pip install -e .`。
+
+安装后,两种调用入口完全等价:
+
+```bash
+explog --help
+python3 -m explog --help
+```
+
+## 配置
+
+TOML 文件恰好包含以下五个顶层键:
+
+```toml
+log = "experiments.jsonl"
+data_root = "experiment-data"
+repository_state_command = ["bash", "scripts/capture-repository-state.sh"]
+experiment_scripts = [["python3", "scripts/run.py"]]
+data_processing_scripts = [["python3", "scripts/process.py"]]
+```
+
+`log` 是实验日志(JSONL)的存放路径。它是相对于配置文件所在目录的路径,也可以是绝对路径。`run`、`init` 和 `list` 默认使用该路径,命令行的 `--log` 可以覆盖它。
+
+`repository_state_command` 必填，只容纳一条命令，使用非空 argv 数组表示。每个元素必须是字符串，第一个元素必须非空。缺少该键、数组为空、元素类型错误或可执行程序为空都会导致配置加载失败。
+
+`experiment_scripts` 和 `data_processing_scripts` 是 argv 数组的列表，列表可以为空，每条命令遵循相同的 argv 校验规则。所有命令都通过参数数组直接执行，工作目录统一为 Git 仓库根目录。配置中的相对脚本路径以仓库根目录为基准；需要 Bash 时，像上例一样显式指定 `bash`。
+
+`data_root` 可以是相对于 Git 根目录的路径,也可以是绝对路径,但解析后的位置必须位于 Git 仓库之内。对于 ID 为 `baseline` 的实验,该工具会创建:
+
+| 路径 | 用途 |
+| --- | --- |
+| `experiment-data/baseline/` | 本次运行的数据目录 |
+| `experiment-data/baseline/raw/` | 实验脚本的输出目录 |
+| `experiment-data/baseline/processed/` | 处理脚本的输出目录 |
+| `experiment-data/baseline/repository-state.txt` | 捕获命令写入的状态文件，文件名由命令决定 |
+
+`data_root` 需要加入项目的 `.gitignore`，因为运行目录在捕获之前已经创建。捕获命令也可以自行排除该目录。
+
+捕获命令额外收到以下参数，调用时运行数据目录、`raw` 和 `processed` 均已存在:
+
+```text
+--output /absolute/path/to/experiment-data/baseline
+```
+
+每个实验命令会额外收到如下参数:
+
+```text
+--output /absolute/path/to/experiment-data/baseline/raw
+```
+
+每个数据处理命令会收到:
+
+```text
+--input /absolute/path/to/experiment-data/baseline/raw --output /absolute/path/to/experiment-data/baseline/processed
+```
+
+所有实验脚本按配置顺序执行,随后所有处理脚本同样按配置顺序执行。同一组内的脚本共享各自的输入或输出目录,并需自行负责选择互不冲突的文件名。
+
+## 捕获状态
+
+捕获命令在实验脚本之前执行，标准输入、标准错误和环境变量继承父进程。诊断信息应写入标准错误，直接显示在终端。命令必须以零状态退出。
+
+标准输出必须恰好包含一行非空路径，路径前后允许空格和 Tab，行末换行符可以省略。空输出、只有空白的输出和两行及以上的输出都会立即报错，错误信息包含原始输出；额外的空行也计入行数。标准输出必须使用 UTF-8 编码。
+
+相对路径以仓库根目录为基准，绝对路径直接使用。路径经过 `resolve()` 规范化后必须指向已存在的普通文件，并位于本次运行的数据目录内部。目录、缺失文件，以及指向数据目录外部文件的符号链接都会被拒绝。日志保存规范化后的文件相对于仓库根目录的 POSIX 路径。
+
+运行器只读取命令报告的路径，状态文件的内容、格式和扩展名由项目决定。超级项目、子模块、多个代码库、工具链版本、外部依赖与生成文件的组织都由这条捕获命令负责；命令可以在内部调用多个工具并汇总到一份文件。
+
+例如，将以下脚本保存为 `scripts/capture-repository-state.sh`，可记录超级项目的 HEAD、子模块状态、超级项目的工作区状态，以及超级项目和子模块的已跟踪文件差异:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+output_dir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output) output_dir="$2"; shift 2 ;;
+    *) echo "unexpected argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+state_file="${output_dir}/repository-state.txt"
+
+{
+  printf 'superproject %s\n' "$(git rev-parse HEAD)"
+  git submodule status --recursive
+  git status --porcelain=v1 --untracked-files=all
+  git diff --binary --full-index HEAD -- .
+  git submodule foreach --recursive 'git diff --binary --full-index HEAD -- .'
+} > "${state_file}"
+
+printf '%s\n' "${state_file}"
+```
+
+项目可以按需扩充脚本记录工具版本、依赖信息和未跟踪文件的内容。运行器只执行用于定位仓库根目录的 Git 命令，捕获示例中的 Git 命令均为读取操作。
+
+## 初始化
+
+首次运行实验前,可以检查环境并初始化日志和数据根目录:
+
+```bash
+explog init --config explog.toml --log experiments.jsonl
+```
+
+这两个选项都可以省略。`--config` 默认是当前目录下的 `explog.toml`;`--log` 默认使用配置文件中 `log` 字段给出的路径,仅在给出时覆盖它。如果配置文件不存在,`init` 会在该位置创建空配置模板，提示填写后以非零状态退出:
+
+```toml
+log = ""
+data_root = ""
+repository_state_command = []
+experiment_scripts = []
+data_processing_scripts = []
+```
+
+填写之前重新运行 `init` 会以 `repository_state_command must be a non-empty argv array` 失败。`log` 和 `data_root` 同样要求非空字符串。填写完成后重新运行 `init` 即可。
+
+`init` 检查当前目录所属的 Git 仓库、配置、捕获命令与实验和处理命令的可执行程序、日志以及数据根目录。仓库可以尚未创建提交，捕获命令所需的项目状态由项目自行检查。
+
+检查全部通过后,`init` 会按需创建日志的父目录、`data_root` 和一个空 JSONL 日志。它不会创建实验 ID、`raw` 或 `processed` 目录。该命令可以安全地重复执行:已有的合法日志、数据目录及其中内容都会原样保留。已有日志或路径非法时,初始化会失败而不会覆盖它们。
+
+配置中带路径的可执行程序相对于 Git 根目录检查,不带路径的程序从当前 `PATH` 查找。`init` 只检查每条命令的第一个 argv 元素,不会推断其余参数是否表示脚本文件。初始化是可选步骤;实验运行命令仍可直接使用。
+
+初始化成功时的输出形式如下，捕获命令通过 `shlex.join` 表示。初始化期间所有脚本均不执行:
+
+```text
+Python: 3.11.9 [OK]
+Git repository: /project [OK]
+Config: /project/explog.toml [OK]
+Repository state command: bash scripts/capture-repository-state.sh [OK]
+Experiment commands: 1 [OK]
+Processing commands: 1 [OK]
+Log: /project/experiments.jsonl [created; 0 records]
+Data root: /project/experiment-data [created]
+explog environment is ready
+```
+
+## 用法
+
+CLI 使用固定的子命令结构:
+
+```text
+explog run  --config CONFIG [--log LOG] --message MESSAGE [--parent-id ID] [--id ID]
+explog init [--config CONFIG] [--log LOG]
+explog list [--config CONFIG] [--log LOG]
+```
+
+使用自动生成的 ID 启动一个根实验:
+
+```bash
+explog run \
+  --config explog.toml \
+  --log experiments.jsonl \
+  --message "Initial compiler settings"
+```
+
+命令成功后会打印其 ID,例如 `20260823T132045Z`。自动生成的 ID 是精确到秒的 UTC 时间戳。使用 `--id` 可显式指定 ID:
+
+```bash
+explog run \
+  --config explog.toml \
+  --log experiments.jsonl \
+  --message "Initial compiler settings" \
+  --id baseline
+```
+
+自定义 ID 会被原样保存。它必须是一个安全的单层目录名:不能为空、不能是 `.` 或 `..`,不能包含 `/`、`\`、NUL 或 ASCII 控制字符。同一日志中不能重复使用某个 ID,且其目标数据目录必须尚不存在。
+
+将某个已有节点指定为父节点,即可创建一个后续实验:
+
+```bash
+explog run \
+  --config explog.toml \
+  --log experiments.jsonl \
+  --message "Increase the batch size" \
+  --parent-id baseline \
+  --id larger-batch
+```
+
+省略 `--parent-id` 会创建根节点。指定的父节点必须已经存在于同一日志中。
+
+`CONFIG` 和 `LOG` 遵循常规的命令行路径处理规则,以相对路径给出时相对于当前工作目录。`LOG` 可以省略,此时使用配置文件中 `log` 字段的路径(相对路径相对于配置文件所在目录)。直接运行实验时,日志文件的父目录必须已经存在;`explog init` 会按需创建它。
+
+## 查看日志
+
+按时间升序查看实验日志:
+
+```bash
+explog list --log experiments.jsonl
+```
+
+`--log` 可以省略,此时 `list` 会加载 `--config` 指定的配置(默认当前目录下的 `explog.toml`)并使用其中 `log` 字段的路径。给出 `--log` 时则完全不读取配置。`list` 只读取日志，不检查 Git 仓库和状态文件，不运行脚本，不修改任何文件，因此可以在非 Git 目录中使用。日志为空时命令成功且不输出内容;日志文件不存在则报错。记录缺少 `repository_state_path` 时立即报错。
+
+输出包含 `TIMESTAMP`、`ID`、`PARENT` 和 `MESSAGE` 四列。根节点的父项显示为 `-`,message 中的换行、回车和 Tab 分别显示为 `\\n`、`\\r` 和 `\\t`。排序时会解析每条记录的带时区 ISO 8601 时间戳并换算到 UTC;时间相同的节点保持它们在 JSONL 中的原始顺序。缺失、非法或不带时区的时间戳会使命令报错。
+
+## JSONL 记录
+
+日志采用 UTF-8 编码的 JSON Lines 格式。对象使用紧凑 JSON,非 ASCII 文本以 UTF-8 原样保留,内嵌换行符会做 JSON 转义,因此每个节点恰好占据一行物理行。新记录以追加模式写入。
+
+每个节点恰好包含以下字段:
+
+- `id`:自动生成或用户指定的实验 ID。
+- `parent_id`:父节点的 ID,根节点为 JSON `null`。
+- `timestamp`:创建节点时的 UTC 时间,采用带 `Z` 后缀、精确到微秒的 ISO 8601 时间戳。
+- `message`:通过 `--message` 传入的原始值。
+- `repository_state_path`:捕获命令产出的状态文件路径，以相对于仓库根目录的 POSIX 路径表示。
+- `data_dir`:运行目录,以相对于 Git 根目录的 POSIX 路径表示,与宿主系统的路径写法无关。
+
+例如，上面两条命令会追加如下形式的记录:
+
+```jsonl
+{"id":"baseline","parent_id":null,"timestamp":"2026-08-24T12:34:56.123456Z","message":"Initial compiler settings","repository_state_path":"experiment-data/baseline/repository-state.txt","data_dir":"experiment-data/baseline"}
+{"id":"larger-batch","parent_id":"baseline","timestamp":"2026-08-24T12:45:00.654321Z","message":"Increase the batch size","repository_state_path":"experiment-data/larger-batch/repository-state.txt","data_dir":"experiment-data/larger-batch"}
+```
+
+## 失败行为
+
+1. 加载并校验配置，定位仓库根目录，校验日志、父节点关系、ID 与路径。
+2. 创建运行数据目录、`raw` 和 `processed` 目录。
+3. 运行捕获命令，校验标准输出与状态文件路径。
+4. 按顺序运行实验脚本，每个脚本收到 `--output <raw 目录>`。
+5. 按顺序运行处理脚本，每个脚本收到 `--input <raw 目录> --output <processed 目录>`。
+6. 追加一条 JSONL 记录。
+
+非法配置或日志、缺失的父节点、重复或不安全的 ID、数据目录冲突、仓库根目录定位失败、目录创建失败、命令无法执行或非零退出，都会中止本次运行并返回非零退出状态。捕获命令的标准输出违反协议、状态文件缺失、路径指向目录或位于本次数据目录之外，同样会立即中止运行。
+
+日志节点只在所有前置步骤成功后追加。失败发生在运行目录创建之后时，运行目录、已写入的状态文件及实验数据全部保留以供诊断。
+
+该工具不提供数据库、索引或锁服务。

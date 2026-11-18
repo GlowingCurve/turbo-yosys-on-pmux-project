@@ -1,0 +1,2 @@
+[console_scripts]
+explog = explog.cli:main
