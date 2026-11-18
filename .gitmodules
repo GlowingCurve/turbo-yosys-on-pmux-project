@@ -1,5 +1,5 @@
-[submodule "yosys"]
-	path = yosys
+[submodule "yosys-optimized"]
+	path = yosys-optimized
 	url = https://github.com/GlowingCurve/turbo-yosys-on-pmux.git
 	branch = yosys-remastered
 [submodule "yosys-original"]
