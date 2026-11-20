@@ -5,3 +5,5 @@ explog/test
 __pycache__/
 experiments.jsonl
 vide.toml
+/docs/
+!docs/技术报告.pdf
